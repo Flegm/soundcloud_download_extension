@@ -3,46 +3,65 @@
 // Слушатель для сообщений от content.js
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.action === 'fetchDownloadUrl') {
-    console.log('[BG] Получены данные от content.js:', request.data);
-    
-    // Запускаем асинхронную операцию
     (async () => {
+      const { trackInfo, clientId } = request.data;
+
       try {
-        const finalUrl = await getFinalDownloadUrl(request.data.trackInfo, request.data.clientId);
-        
-        console.log('[BG] Финальный URL получен, начинаю скачивание:', finalUrl);
+        if (trackInfo.kind === 'track') {
+          console.log(`[BG] Single track download: "${trackInfo.title}"`);
+          await downloadTrack(trackInfo, clientId);
 
-        // Используем API для скачивания
-        chrome.downloads.download({
-          url: finalUrl,
-          // Очищаем имя файла от недопустимых символов
-          filename: `${request.data.trackInfo.title.replace(/[/\\?%*:|"<>]/g, '-')}.mp3`
-        });
-        
-        // Сообщаем content.js об успехе
-        chrome.tabs.sendMessage(sender.tab.id, { action: 'downloadStatus', status: 'success' });
-
-      } catch (error) {
-        console.error('[BG] Полная ошибка в фоновом скрипте:', error);
-        // Сообщаем content.js об ошибке
-        chrome.tabs.sendMessage(sender.tab.id, { action: 'downloadStatus', status: 'error', message: error.message });
+        } else if (trackInfo.kind === 'playlist') {
+          console.log(`[BG] Playlist download: "${trackInfo.title}", ${trackInfo.track_count} tracks.`);
+          // Sanitize playlist title for folder name
+          const playlistFolder = trackInfo.title.replace(/[/\\?%*:|"<>]/g, '-');
+          
+          for (const track of trackInfo.tracks) {
+            await downloadTrack(track, clientId, playlistFolder);
+            // Optional: add a small delay to avoid overwhelming the download manager or getting rate-limited.
+            await new Promise(resolve => setTimeout(resolve, 200)); 
+          }
+        }
+      } catch (e) {
+        console.error('[BG] Top-level download error:', e);
       }
     })();
-
-    return true; // Держим канал открытым для асинхронных операций
+    return true;
   }
 });
 
+/**
+ * Downloads a single track, optionally into a subfolder.
+ * @param {object} track - The track object from SoundCloud API.
+ * @param {string} clientId - The API client_id.
+ * @param {string} [subfolder=''] - The subfolder to save the track in.
+ */
+async function downloadTrack(track, clientId, subfolder = '') {
+  try {
+    const finalUrl = await getFinalDownloadUrl(track, clientId);
+    const sanitizedTitle = track.title.replace(/[/\\?%*:|"<>]/g, '-');
+    const filename = subfolder ? `${subfolder}/${sanitizedTitle}.mp3` : `${sanitizedTitle}.mp3`;
+    
+    console.log(`[BG] Downloading to: ${filename}`);
+    chrome.downloads.download({
+      url: finalUrl,
+      filename: filename
+    });
+  } catch (error) {
+    console.error(`[BG] Failed to download track "${track.title}":`, error);
+  }
+}
 
 async function getFinalDownloadUrl(trackInfo, clientId) {
+    // This function might need to fetch the full track object if `media` is missing
     let media = trackInfo.media;
     if (!media) {
-      console.log(`[BG] Медиа-данные отсутствуют, делаю доп. запрос к tracks API...`);
+      console.log(`[BG] Media data missing for "${trackInfo.title}", fetching full track object...`);
       const trackApiUrl = `https://api-v2.soundcloud.com/tracks/${trackInfo.id}?client_id=${clientId}`;
       const trackApiResponse = await fetch(trackApiUrl);
-      if (!trackApiResponse.ok) throw new Error(`Ошибка Tracks API: ${trackApiResponse.status}`);
-      const trackApiData = await trackApiResponse.json();
-      media = trackApiData.media;
+      if (!trackApiResponse.ok) throw new Error(`Tracks API error: ${trackApiResponse.status}`);
+      const fullTrackData = await trackApiResponse.json();
+      media = fullTrackData.media;
     }
 
     if (!media || !media.transcodings) {
@@ -55,14 +74,12 @@ async function getFinalDownloadUrl(trackInfo, clientId) {
     }
 
     const intermediateUrl = `${progressiveTranscoding.url}?client_id=${clientId}`;
-    console.log(`[BG] Запрос по промежуточному URL: ${intermediateUrl}`);
     const response = await fetch(intermediateUrl);
     
     if (!response.ok) {
         throw new Error(`Не удалось получить финальный URL. Статус: ${response.status}`);
     }
 
-    // ИЗМЕНЕНИЕ: Парсим JSON-ответ, чтобы получить финальный URL
     const responseData = await response.json();
     const finalDownloadUrl = responseData.url;
 
@@ -70,6 +87,5 @@ async function getFinalDownloadUrl(trackInfo, clientId) {
       throw new Error('Ответ API не содержал финального URL в поле "url".');
     }
     
-    console.log(`[BG] Успех! Финальный URL извлечен из JSON: ${finalDownloadUrl}`);
     return finalDownloadUrl;
 } 

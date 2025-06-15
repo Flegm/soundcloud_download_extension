@@ -48,52 +48,38 @@
   }
 
   /**
-   * Finds the corresponding track data object for a given track element.
-   * It first tries to find a URL within the element and match it against
-   * the page's hydration data. If that fails, it uses the found URL
-   * to make a call to SoundCloud's resolve API.
-   * @param {HTMLElement} trackContainer - The DOM element for the track.
+   * Finds the corresponding track or playlist data object for a given track element.
+   * It finds a URL within the element (or uses the page URL) and resolves it via API.
+   * @param {HTMLElement} trackContainer - The DOM element for the track or a larger container.
    * @returns {Promise<object|null>}
    */
   async function findTrackInfoForElement(trackContainer) {
-    const link = trackContainer.querySelector('a.soundTitle__title');
-    if (!link?.href) {
-        console.error('[Downloader] Could not find a title link with a valid href within the track container:', trackContainer);
-        return null;
-    }
-    const trackUrl = link.href;
-
-    // Attempt 1: Match against hydration data (fastest)
-    if (window.__sc_hydration) {
-        const trackPath = new URL(trackUrl).pathname;
-        for (const item of window.__sc_hydration) {
-            if (item.hydratable === 'sound' && item.data?.permalink_url?.endsWith(trackPath)) {
-                console.log('[Downloader] Matched track info via hydration for:', trackPath);
-                return item.data;
-            }
-        }
-    }
+    // Универсальный селектор для ссылок на заголовки в разных представлениях
+    const link = trackContainer.querySelector('a.soundTitle__title, a.trackItem__trackTitle');
     
-    // Attempt 2 (Fallback): Resolve the specific track URL via API
-    console.warn('[Downloader] No hydration match. Using fallback resolve API for URL:', trackUrl);
+    // Если ссылка найдена в элементе, используем ее. Иначе (для главной страницы трека/плейлиста) - URL всей страницы.
+    const urlToResolve = link ? link.href : window.location.href;
+
+    console.log(`[Downloader] Resolving URL: ${urlToResolve}`);
     const clientId = await getClientId();
     if (!clientId) {
-        console.error('[Downloader] Cannot use fallback: Client ID not found.');
+        console.error('[Downloader] Cannot resolve: Client ID not found.');
         return null;
     }
     
-    const resolveUrl = `https://api-v2.soundcloud.com/resolve?url=${encodeURIComponent(trackUrl)}&client_id=${clientId}`;
+    const resolveUrl = `https://api-v2.soundcloud.com/resolve?url=${encodeURIComponent(urlToResolve)}&client_id=${clientId}`;
     try {
         const response = await fetch(resolveUrl);
         if (!response.ok) throw new Error(`API response status: ${response.status}`);
         
         const data = await response.json();
-        if (data.kind === 'track') {
-            console.log('[Downloader] Matched track via fallback API resolve.');
+        // Возвращаем данные, если это трек или плейлист. Фон разберется.
+        if (data.kind === 'track' || data.kind === 'playlist') {
+            console.log(`[Downloader] Resolved as a ${data.kind}: "${data.title}"`);
             return data;
         }
     } catch (error) {
-        console.error('[Downloader] Fallback resolve API failed:', error);
+        console.error('[Downloader] Resolve API failed:', error);
     }
 
     return null;
@@ -117,13 +103,13 @@
       const trackContainer = button.closest('.sound, .trackItem, .listen__body, .searchList__item, .listenEngagement, .soundBadge');
       if (!trackContainer) throw new Error('Could not find parent track container for the button.');
       
-      const trackInfo = await findTrackInfoForElement(trackContainer);
-      if (!trackInfo) throw new Error('Could not resolve track info for this element.');
+      const trackOrPlaylistInfo = await findTrackInfoForElement(trackContainer);
+      if (!trackOrPlaylistInfo) throw new Error('Could not resolve track/playlist info for this element.');
       
-      console.log(`[Downloader] Sending download request for "${trackInfo.title}"`);
+      console.log(`[Downloader] Sending download request for "${trackOrPlaylistInfo.title}"`);
       chrome.runtime.sendMessage({
         action: 'fetchDownloadUrl',
-        data: { clientId, trackInfo }
+        data: { clientId, trackInfo: trackOrPlaylistInfo }
       });
       
       button.innerHTML = '✓';
@@ -141,12 +127,18 @@
   // --- UI Injection ---
 
   /**
-   * Creates a new download button.
+   * Creates a new download button, adapting its size to sibling buttons.
+   * @param {HTMLElement} actionGroup - The button group where the new button will be injected.
    * @returns {HTMLButtonElement}
    */
-  function createDownloadButton() {
+  function createDownloadButton(actionGroup) {
     const button = document.createElement('button');
-    button.className = 'sc-button-secondary sc-button sc-button-medium sc-button-icon sc-button-responsive';
+    
+    // Determine button size by checking for existing small buttons in the group
+    const isSmall = actionGroup.querySelector('.sc-button-small');
+    const sizeClass = isSmall ? 'sc-button-small' : 'sc-button-medium';
+
+    button.className = `sc-button-secondary sc-button ${sizeClass} sc-button-icon sc-button-responsive`;
     button.title = 'Скачать трек';
     button.innerHTML = DOWNLOAD_SVG_ICON;
     button.addEventListener('click', handleDownloadClick);
@@ -173,23 +165,20 @@
     }
 
     for (const group of actionGroups) {
-      // Mark this group as processed so we don't add another button on next scan.
       group.classList.add('download-btn-injected');
 
-      // The track information is usually contained in a larger parent element.
-      // We assume that the 'closest' element that contains a title link is the track container.
       const trackContainer = group.closest('.sound, .trackItem, .listen__body, .searchList__item, .soundBadge');
       
       if (trackContainer && trackContainer.querySelector('a.soundTitle__title')) {
         console.log('[Downloader] Found valid track container, injecting button into:', group);
-        const button = createDownloadButton();
+        const button = createDownloadButton(group);
         group.prepend(button);
       } else {
         // This is a special case for the main player on a track page,
         // where the actions are sometimes detached from the main title element.
         if(document.querySelector('.listenEngagement')) {
              console.log('[Downloader] Found main player via .listenEngagement, injecting button.');
-             const button = createDownloadButton();
+             const button = createDownloadButton(group);
              group.prepend(button);
         } else {
             console.warn('[Downloader] Found an action group, but could not determine its track container.', group);
