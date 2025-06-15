@@ -1,219 +1,184 @@
-// content.js - Refactored for multiple buttons with heavy logging
+// content.js
 
 (function() {
   'use strict';
-  console.log('[Downloader V6] Script injected and running.');
 
-  const DOWNLOAD_SVG_ICON = `
-    <svg viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" style="width: 16px; height: 16px;">
-      <path d="M8.5 2a.5.5 0 00-1 0v6.793L5.354 6.646a.5.5 0 10-.708.708l3 3a.5.5 0 00.708 0l3-3a.5.5 0 00-.708-.708L8.5 8.793V2z" fill="currentColor"></path>
-      <path d="M3.5 12.5a.5.5 0 000 1h9a.5.5 0 000-1h-9z" fill="currentColor"></path>
-    </svg>`;
+  // --- Configuration ---
+  const ACTION_SELECTORS = [
+    '.soundActions .sc-button-group',
+    '.soundList__item .sound__actions .sc-button-group',
+    '.playableTile__actions .playableTile__actionWrapper'
+  ];
+  const DOWNLOAD_BUTTON_CLASS = 'sc-button-download';
+  const DOWNLOAD_BUTTON_PLAYLIST_CLASS = 'sc-button-download-playlist';
+  const SVG_ICON_DOWNLOAD = `<svg width="16" height="16" viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path fill="currentColor" d="M14 12v2H2v-2H0v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2h-2zM8 0l-4 4h2.5v6H9.5V4H12L8 0z"/></svg>`;
 
-  let globalClientId = null;
-  let scanCount = 0;
+  let clientIdPromise = null;
 
   // --- Core Functions ---
 
-  /**
-   * Caches the client_id for the session.
-   * @returns {Promise<string|null>}
-   */
-  async function getClientId() {
-    if (globalClientId) return globalClientId;
-    
-    console.log('[Downloader] Caching Client ID...');
-    const pageHtml = document.documentElement.innerHTML;
-    let match = pageHtml.match(/"clientId":"([^"]+)"/);
-    if (match?.[1]) {
-        globalClientId = match[1];
-        console.log('[Downloader] Client ID found in HTML.');
-        return globalClientId;
-    }
+  function getClientId() {
+    if (clientIdPromise) return clientIdPromise;
 
-    const scripts = Array.from(document.querySelectorAll('script[src]'));
-    for (const script of scripts) {
-      try {
-        const scriptContent = await fetch(script.src).then(res => res.text());
-        match = scriptContent.match(/client_id:"([a-zA-Z0-9_-]+)"/);
-        if (match?.[1]) {
-          globalClientId = match[1];
-          console.log('[Downloader] Client ID found in script:', script.src);
-          return globalClientId;
+    clientIdPromise = new Promise(async (resolve, reject) => {
+      for (let i = 0; i < 15; i++) { // Retry for ~7.5 seconds
+        const appScripts = Array.from(document.querySelectorAll('script[src]'))
+                                .filter(s => s.src && s.src.includes('sndcdn.com/assets/'));
+
+        for (const script of appScripts) {
+          try {
+            const text = await fetch(script.src).then(res => res.text());
+            const match = text.match(/client_id\s*:\s*"([a-zA-Z0-9_]+)"/);
+            if (match && match[1]) {
+              console.log('[SC DL] client_id found:', match[1]);
+              return resolve(match[1]);
+            }
+          } catch (error) {
+            console.warn(`[SC DL] Failed to fetch/parse script ${script.src}, trying others...`);
+          }
         }
-      } catch (e) { /* ignore */ }
-    }
-    console.error('[Downloader] CRITICAL: Client ID could not be found.');
-    return null;
+        await new Promise(p => setTimeout(p, 500));
+      }
+      reject('Client ID not found after multiple retries.');
+    });
+    return clientIdPromise;
   }
 
-  /**
-   * Finds the corresponding track or playlist data object for a given track element.
-   * It finds a URL within the element (or uses the page URL) and resolves it via API.
-   * @param {HTMLElement} trackContainer - The DOM element for the track or a larger container.
-   * @returns {Promise<object|null>}
-   */
-  async function findTrackInfoForElement(trackContainer) {
-    // Универсальный селектор для ссылок на заголовки в разных представлениях
-    const link = trackContainer.querySelector('a.soundTitle__title, a.trackItem__trackTitle');
-    
-    // Если ссылка найдена в элементе, используем ее. Иначе (для главной страницы трека/плейлиста) - URL всей страницы.
-    const urlToResolve = link ? link.href : window.location.href;
-
-    console.log(`[Downloader] Resolving URL: ${urlToResolve}`);
-    const clientId = await getClientId();
-    if (!clientId) {
-        console.error('[Downloader] Cannot resolve: Client ID not found.');
-        return null;
-    }
-    
-    const resolveUrl = `https://api-v2.soundcloud.com/resolve?url=${encodeURIComponent(urlToResolve)}&client_id=${clientId}`;
-    try {
-        const response = await fetch(resolveUrl);
-        if (!response.ok) throw new Error(`API response status: ${response.status}`);
-        
-        const data = await response.json();
-        // Возвращаем данные, если это трек или плейлист. Фон разберется.
-        if (data.kind === 'track' || data.kind === 'playlist') {
-            console.log(`[Downloader] Resolved as a ${data.kind}: "${data.title}"`);
-            return data;
-        }
-    } catch (error) {
-        console.error('[Downloader] Resolve API failed:', error);
-    }
-
-    return null;
-  }
-  
-  /**
-   * Handles the download button click.
-   * @param {Event} event
-   */
-  async function handleDownloadClick(event) {
-    const button = event.currentTarget;
-    event.stopPropagation();
-    
-    button.disabled = true;
-    button.innerHTML = '...';
-    
+  async function fetchTrackInfo(trackUrl) {
     try {
       const clientId = await getClientId();
-      if (!clientId) throw new Error('Client ID not found.');
+      const resolveUrl = `https://api-v2.soundcloud.com/resolve?url=${encodeURIComponent(trackUrl)}&client_id=${clientId}`;
+      const response = await fetch(resolveUrl);
+      if (!response.ok) throw new Error(`API resolve failed: ${response.status}`);
+      return await response.json();
+    } catch (error) {
+      console.error('[SC DL] fetchTrackInfo failed:', error);
+      throw error;
+    }
+  }
+
+  function createDownloadButton(isPlaylistButton) {
+    const btn = document.createElement('button');
+    const btnClass = isPlaylistButton ? DOWNLOAD_BUTTON_PLAYLIST_CLASS : DOWNLOAD_BUTTON_CLASS;
+    btn.className = `sc-button sc-button-small sc-button-responsive ${btnClass}`;
+    btn.title = isPlaylistButton ? 'Download Playlist' : 'Download';
+    btn.innerHTML = SVG_ICON_DOWNLOAD;
+    return btn;
+  }
+
+  async function handleTrackClick(event) {
+    const target = event.target.closest(`.${DOWNLOAD_BUTTON_CLASS}, .${DOWNLOAD_BUTTON_PLAYLIST_CLASS}`);
+    if (!target) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+
+    const isPlaylist = target.classList.contains(DOWNLOAD_BUTTON_PLAYLIST_CLASS);
+    const trackUrl = isPlaylist ? window.location.href : target.dataset.trackUrl;
+
+    if (!trackUrl) {
+      console.error('[SC DL] No track URL found for this button.');
+      return;
+    }
+
+    console.log(`[SC DL] Click detected. Type: ${isPlaylist ? 'Playlist' : 'Single'}. URL: ${trackUrl}`);
+    target.disabled = true;
+
+    try {
+      const [trackInfo, clientId] = await Promise.all([fetchTrackInfo(trackUrl), getClientId()]);
       
-      const trackContainer = button.closest('.sound, .trackItem, .listen__body, .searchList__item, .listenEngagement, .soundBadge');
-      if (!trackContainer) throw new Error('Could not find parent track container for the button.');
-      
-      const trackOrPlaylistInfo = await findTrackInfoForElement(trackContainer);
-      if (!trackOrPlaylistInfo) throw new Error('Could not resolve track/playlist info for this element.');
-      
-      console.log(`[Downloader] Sending download request for "${trackOrPlaylistInfo.title}"`);
       chrome.runtime.sendMessage({
         action: 'fetchDownloadUrl',
-        data: { clientId, trackInfo: trackOrPlaylistInfo }
+        data: { trackInfo, clientId }
       });
-      
-      button.innerHTML = '✓';
     } catch (error) {
-      console.error('[Downloader] Download click error:', error);
-      button.innerHTML = '✗';
+      console.error(`[SC DL] Download failed: ${error.message}`);
     } finally {
-      setTimeout(() => {
-        button.disabled = false;
-        button.innerHTML = DOWNLOAD_SVG_ICON;
-      }, 2000);
+      target.disabled = false;
     }
   }
 
-  // --- UI Injection ---
+  function addButtons(node) {
+    if (node.nodeType !== Node.ELEMENT_NODE) return;
 
-  /**
-   * Creates a new download button, adapting its size to sibling buttons.
-   * @param {HTMLElement} actionGroup - The button group where the new button will be injected.
-   * @returns {HTMLButtonElement}
-   */
-  function createDownloadButton(actionGroup) {
-    const button = document.createElement('button');
-    
-    // Determine button size by checking for existing small buttons in the group
-    const isSmall = actionGroup.querySelector('.sc-button-small');
-    const sizeClass = isSmall ? 'sc-button-small' : 'sc-button-medium';
+    // --- Handle Individual Track Buttons ---
+    ACTION_SELECTORS.forEach(selector => {
+        const groups = [];
+        // Check if the node itself is a target
+        try {
+            if (node.matches(selector)) groups.push(node);
+        } catch(e) { /* ignore invalid selectors for nodes that aren't elements */ }
+        // Check for targets inside the node
+        groups.push(...node.querySelectorAll(selector));
 
-    button.className = `sc-button-secondary sc-button ${sizeClass} sc-button-icon sc-button-responsive`;
-    button.title = 'Скачать трек';
-    button.innerHTML = DOWNLOAD_SVG_ICON;
-    button.addEventListener('click', handleDownloadClick);
-    return button;
+        groups.forEach(group => {
+            if (group.querySelector(`.${DOWNLOAD_BUTTON_CLASS}`)) return;
+
+            let trackUrl;
+            const mainTrackContainer = group.closest('.listenEngagement__actions');
+            const tileContainer = group.closest('.playableTile');
+            const soundContainer = group.closest('.sound, .soundList__item');
+
+            if (mainTrackContainer) {
+                trackUrl = window.location.href;
+            } else if (tileContainer) {
+                const linkEl = tileContainer.querySelector('a.playableTile__artworkLink');
+                if (linkEl?.href) trackUrl = new URL(linkEl.href, window.location.origin).href;
+            } else if (soundContainer) {
+                const linkEl = soundContainer.querySelector('a.soundTitle__title, a.trackItem__trackTitle');
+                if (linkEl?.href) trackUrl = new URL(linkEl.href, window.location.origin).href;
+            }
+            
+            if (!trackUrl) return;
+
+            const btn = createDownloadButton(false);
+            btn.dataset.trackUrl = trackUrl;
+
+            // --- Style Matching ---
+            const existingButton = group.querySelector('.sc-button:not(.sc-button-download)');
+            if (existingButton) {
+                const classesToCopy = ['sc-button-secondary', 'sc-button-icon', 'playableTile__actionButton'];
+                classesToCopy.forEach(cls => {
+                    if (existingButton.classList.contains(cls)) btn.classList.add(cls);
+                });
+                const sizeClass = Array.from(existingButton.classList).find(c => c.match(/sc-button-(small|medium|large)/));
+                if (sizeClass) btn.classList.replace('sc-button-small', sizeClass);
+            }
+            
+            group.appendChild(btn);
+        });
+    });
+
+    // --- Handle Main Playlist Button ---
+    const mainHeaderSelector = '.sound__header .soundActions .sc-button-group';
+    const mainActionGroups = node.querySelectorAll(mainHeaderSelector);
+    mainActionGroups.forEach(group => {
+        if (group.querySelector(`.${DOWNLOAD_BUTTON_PLAYLIST_CLASS}`)) return;
+        if (document.querySelector('.sound.playlist, .sound.album')) {
+            const btn = createDownloadButton(true);
+            if (!btn.classList.contains('sc-button-secondary')) {
+                btn.classList.add('sc-button-secondary');
+            }
+            group.appendChild(btn);
+        }
+    });
   }
 
-  /**
-   * Finds all track items on the page and injects a download button if one doesn't exist.
-   *
-   * This is the core logic that needs to be robust against SoundCloud's layout changes.
-   * We will look directly for the button groups, as they are a stable landmark.
-   */
-  function scanAndInject() {
-    scanCount++;
-    console.log(`[Downloader] Scan #${scanCount} running...`);
-
-    // Selector for the button group container. We add :not(.download-btn-injected)
-    // to avoid processing the same group twice.
-    const selector = '.soundActions .sc-button-group:not(.download-btn-injected)';
-    const actionGroups = document.querySelectorAll(selector);
-
-    if (actionGroups.length > 0) {
-      console.log(`[Downloader] Found ${actionGroups.length} new action group(s).`);
-    }
-
-    for (const group of actionGroups) {
-      group.classList.add('download-btn-injected');
-
-      const trackContainer = group.closest('.sound, .trackItem, .listen__body, .searchList__item, .soundBadge');
-      
-      if (trackContainer && trackContainer.querySelector('a.soundTitle__title')) {
-        console.log('[Downloader] Found valid track container, injecting button into:', group);
-        const button = createDownloadButton(group);
-        group.prepend(button);
-      } else {
-        // This is a special case for the main player on a track page,
-        // where the actions are sometimes detached from the main title element.
-        if(document.querySelector('.listenEngagement')) {
-             console.log('[Downloader] Found main player via .listenEngagement, injecting button.');
-             const button = createDownloadButton(group);
-             group.prepend(button);
-        } else {
-            console.warn('[Downloader] Found an action group, but could not determine its track container.', group);
+  // --- Observer & Initialization ---
+  function startObserver() {
+    const observer = new MutationObserver(mutations => {
+      for (const mutation of mutations) {
+        for (const node of mutation.addedNodes) {
+          addButtons(node);
         }
       }
-    }
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
+    addButtons(document.body); // Initial run on the whole body
   }
 
-  // --- Initialization ---
-
-  function debounce(func, wait) {
-    let timeout;
-    return function executedFunction(...args) {
-        const later = () => {
-            clearTimeout(timeout);
-            func(...args);
-        };
-        clearTimeout(timeout);
-        timeout = setTimeout(later, wait);
-    };
-  }
-
-  const debouncedScan = debounce(scanAndInject, 500);
-  const observer = new MutationObserver(debouncedScan);
-  
-  getClientId().then(id => {
-    if(id) {
-        console.log('[Downloader] Client ID cached. Starting observer.');
-        observer.observe(document.body, { childList: true, subtree: true });
-        scanAndInject(); // Initial scan
-    } else {
-        console.error('[Downloader] Could not start observer, Client ID not found.');
-    }
-  });
-
-  console.log('[Downloader] SoundCloud Downloader V6 initialized.');
+  document.addEventListener('click', handleTrackClick, true);
+  getClientId(); // Start fetching client_id as soon as possible
+  startObserver();
 
 })(); 
