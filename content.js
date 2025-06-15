@@ -118,7 +118,7 @@
             let trackUrl;
             const mainTrackContainer = group.closest('.listenEngagement__actions');
             const tileContainer = group.closest('.playableTile');
-            const soundContainer = group.closest('.sound, .soundList__item, .soundBadge');
+            const soundContainer = group.closest('.sound, .soundList__item, .soundBadge, .trackItem');
 
             if (mainTrackContainer) {
                 trackUrl = window.location.href;
