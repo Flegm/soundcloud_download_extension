@@ -8,84 +8,82 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
       try {
         if (trackInfo.kind === 'track') {
-          console.log(`[BG] Single track download: "${trackInfo.title}"`);
-          await downloadTrack(trackInfo, clientId);
+          console.log(`[BG] Single track download initiated: "${trackInfo.title}"`);
+          await processAndDownloadTrack(trackInfo, clientId);
 
         } else if (trackInfo.kind === 'playlist') {
-          console.log(`[BG] Playlist download: "${trackInfo.title}", ${trackInfo.track_count} tracks.`);
-          // Sanitize playlist title for folder name
+          console.log(`[BG] Playlist download initiated: "${trackInfo.title}", ${trackInfo.track_count} tracks.`);
           const playlistFolder = trackInfo.title.replace(/[/\\?%*:|"<>]/g, '-');
           
-          for (const track of trackInfo.tracks) {
-            await downloadTrack(track, clientId, playlistFolder);
-            // Optional: add a small delay to avoid overwhelming the download manager or getting rate-limited.
-            await new Promise(resolve => setTimeout(resolve, 200)); 
+          for (const trackSummary of trackInfo.tracks) {
+            // Check if it's a valid track summary before processing
+            if (trackSummary && trackSummary.id) {
+               await processAndDownloadTrack(trackSummary, clientId, playlistFolder);
+               // Add a small delay to be polite to the API
+               await new Promise(resolve => setTimeout(resolve, 300)); 
+            } else {
+               console.warn('[BG] Skipping invalid item in playlist:', JSON.stringify(trackSummary, null, 2));
+            }
           }
+          console.log(`[BG] Playlist download finished for "${trackInfo.title}".`);
         }
       } catch (e) {
-        console.error('[BG] Top-level download error:', e);
+        console.error('[BG] Top-level error in listener:', e);
       }
     })();
-    return true;
+    return true; // Keep channel open for async operations
   }
 });
 
 /**
- * Downloads a single track, optionally into a subfolder.
- * @param {object} track - The track object from SoundCloud API.
+ * Fetches the full track data, gets the final download URL, and initiates the download.
+ * @param {object} trackObject - A track object (can be a summary or a full object).
  * @param {string} clientId - The API client_id.
- * @param {string} [subfolder=''] - The subfolder to save the track in.
+ * @param {string} [subfolder=''] - The optional subfolder for the download.
  */
-async function downloadTrack(track, clientId, subfolder = '') {
+async function processAndDownloadTrack(trackObject, clientId, subfolder = '') {
   try {
-    const finalUrl = await getFinalDownloadUrl(track, clientId);
-    const sanitizedTitle = track.title.replace(/[/\\?%*:|"<>]/g, '-');
-    const filename = subfolder ? `${subfolder}/${sanitizedTitle}.mp3` : `${sanitizedTitle}.mp3`;
-    
-    console.log(`[BG] Downloading to: ${filename}`);
-    chrome.downloads.download({
-      url: finalUrl,
-      filename: filename
-    });
-  } catch (error) {
-    console.error(`[BG] Failed to download track "${track.title}":`, error);
-  }
-}
-
-async function getFinalDownloadUrl(trackInfo, clientId) {
-    // This function might need to fetch the full track object if `media` is missing
-    let media = trackInfo.media;
-    if (!media) {
-      console.log(`[BG] Media data missing for "${trackInfo.title}", fetching full track object...`);
-      const trackApiUrl = `https://api-v2.soundcloud.com/tracks/${trackInfo.id}?client_id=${clientId}`;
-      const trackApiResponse = await fetch(trackApiUrl);
-      if (!trackApiResponse.ok) throw new Error(`Tracks API error: ${trackApiResponse.status}`);
-      const fullTrackData = await trackApiResponse.json();
-      media = fullTrackData.media;
+    // Step 1: Always fetch the full track object to ensure we have fresh media data.
+    console.log(`[BG] Processing track: "${trackObject.title}" (ID: ${trackObject.id})`);
+    const trackApiUrl = `https://api-v2.soundcloud.com/tracks/${trackObject.id}?client_id=${clientId}`;
+    const trackApiResponse = await fetch(trackApiUrl);
+    if (!trackApiResponse.ok) {
+      throw new Error(`Failed to fetch full track object, status: ${trackApiResponse.status}`);
     }
+    const fullTrackObject = await trackApiResponse.json();
 
-    if (!media || !media.transcodings) {
-      throw new Error('Медиа-данные не содержат информации о транскодингах.');
-    }
-
-    const progressiveTranscoding = media.transcodings.find(t => t.format?.protocol === 'progressive');
+    // Step 2: Extract the progressive transcoding URL from the full object.
+    const progressiveTranscoding = fullTrackObject.media?.transcodings?.find(
+      t => t.format?.protocol === 'progressive'
+    );
     if (!progressiveTranscoding?.url) {
-      throw new Error('Трек недоступен для скачивания (нет progressive-ссылки).');
+      throw new Error('Track is not available for download (no progressive stream URL).');
     }
 
+    // Step 3: Fetch the intermediate URL to get the final download URL from the JSON response.
     const intermediateUrl = `${progressiveTranscoding.url}?client_id=${clientId}`;
-    const response = await fetch(intermediateUrl);
-    
-    if (!response.ok) {
-        throw new Error(`Не удалось получить финальный URL. Статус: ${response.status}`);
+    const finalUrlResponse = await fetch(intermediateUrl);
+    if (!finalUrlResponse.ok) {
+      throw new Error(`Failed to fetch intermediate URL, status: ${finalUrlResponse.status}`);
     }
-
-    const responseData = await response.json();
-    const finalDownloadUrl = responseData.url;
+    const finalUrlData = await finalUrlResponse.json();
+    const finalDownloadUrl = finalUrlData.url;
 
     if (!finalDownloadUrl) {
-      throw new Error('Ответ API не содержал финального URL в поле "url".');
+      throw new Error('Final download URL was not found in the API response.');
     }
+
+    // Step 4: Sanitize filename and initiate download.
+    const sanitizedTitle = fullTrackObject.title.replace(/[/\\?%*:|"<>]/g, '-');
+    const filename = subfolder ? `${subfolder}/${sanitizedTitle}.mp3` : `${sanitizedTitle}.mp3`;
     
-    return finalDownloadUrl;
+    console.log(`[BG] Starting download for "${fullTrackObject.title}" to "${filename}"`);
+    chrome.downloads.download({
+      url: finalDownloadUrl,
+      filename: filename
+    });
+
+  } catch (error) {
+    console.error(`[BG] Failed to process/download track "${trackObject.title || 'Unknown'}":`, error);
+  }
 } 
