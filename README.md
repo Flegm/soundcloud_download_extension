@@ -1,4 +1,4 @@
-# SC Audio Archiver
+# SoundCloud Download Extension
 
 [![Поддержать проект](https://img.shields.io/badge/Поддержать-ЮKassa-blue?style=for-the-badge&logo=yookassa&logoColor=white)](https://flegm.github.io/soundcloud_download_extension/)
 
