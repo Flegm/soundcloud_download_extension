@@ -13,7 +13,16 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
         } else if (trackInfo.kind === 'playlist') {
           console.log(`[BG] Playlist download initiated: "${trackInfo.title}", ${trackInfo.track_count} tracks.`);
-          const playlistFolder = trackInfo.title.replace(/[/\\?%*:|"<>]/g, '-');
+          
+          // --- Create playlist folder name: "Artist - Title (Year)" ---
+          const artist = trackInfo.user?.username;
+          const title = trackInfo.title;
+          const date = trackInfo.release_date || trackInfo.created_at;
+          const year = date ? new Date(date).getFullYear() : null;
+          const yearString = year && !isNaN(year) ? ` (${year})` : '';
+
+          const folderBaseName = artist ? `${artist} - ${title}${yearString}` : `${title}${yearString}`;
+          const playlistFolder = folderBaseName.replace(/[/\\?%*:|"<>]/g, ''); // Remove invalid chars
           
           for (const trackSummary of trackInfo.tracks) {
             // Check if it's a valid track summary before processing
