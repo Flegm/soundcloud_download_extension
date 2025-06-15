@@ -310,6 +310,45 @@
       // Add to the beginning of the controls
       controls.prepend(buttonWrapper);
     });
+
+    // --- Handle Player Button ---
+    const playerSelector = '.playbackSoundBadge__actions';
+    const playerActionGroups = [];
+    
+    // Check if the node itself is a target or contains targets
+    try {
+        if (node.matches(playerSelector)) playerActionGroups.push(node);
+    } catch(e) { /* ignore, node might not be an element */ }
+    try {
+        playerActionGroups.push(...node.querySelectorAll(playerSelector));
+    } catch(e) { /* ignore, node might not be an element */ }
+
+    playerActionGroups.forEach(group => {
+      if (group.querySelector(`.${DOWNLOAD_BUTTON_CLASS}`)) return;
+
+      const playerContainer = group.closest('.playbackSoundBadge');
+      if (!playerContainer) return;
+
+      const titleLink = playerContainer.querySelector('a.playbackSoundBadge__titleLink');
+      const trackUrl = titleLink ? new URL(titleLink.href, window.location.origin).href : null;
+
+      if (!trackUrl) return;
+
+      const btn = createDownloadButton(false);
+      btn.dataset.trackUrl = trackUrl;
+
+      // Match style of other buttons in the player
+      btn.classList.add('sc-button-secondary', 'sc-button-icon');
+      btn.classList.add('sc-mr-1x'); // Add right margin to match other buttons
+
+      // Insert before the 'Next up' button for consistent placement
+      const nextUpButton = group.querySelector('.playbackSoundBadge__showQueue');
+      if (nextUpButton) {
+        group.insertBefore(btn, nextUpButton);
+      } else {
+        group.appendChild(btn);
+      }
+    });
   }
 
   // --- Observer & Initialization ---
