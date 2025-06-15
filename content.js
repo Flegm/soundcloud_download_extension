@@ -31,7 +31,7 @@ function injectButton() {
   const downloadButton = document.createElement('button');
   downloadButton.id = BUTTON_ID;
   // Используем те же классы, что и у соседних кнопок для совпадения стиля
-  downloadButton.className = 'sc-button-download sc-button sc-button-medium sc-button-icon sc-button-responsive';
+  downloadButton.className = 'sc-button-secondary sc-button sc-button-medium sc-button-icon sc-button-responsive';
   downloadButton.title = 'Скачать трек';
   downloadButton.innerHTML = DOWNLOAD_SVG_ICON;
 
