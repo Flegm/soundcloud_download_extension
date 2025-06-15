@@ -74,8 +74,29 @@ async function processAndDownloadTrack(trackObject, clientId, subfolder = '') {
     }
 
     // Step 4: Sanitize filename and initiate download.
-    const sanitizedTitle = fullTrackObject.title.replace(/[/\\?%*:|"<>]/g, '-');
-    const filename = subfolder ? `${subfolder}/${sanitizedTitle}.mp3` : `${sanitizedTitle}.mp3`;
+    let artist = '';
+    let title = fullTrackObject.title;
+
+    // Priority 1: Publisher metadata
+    if (fullTrackObject.publisher_metadata && fullTrackObject.publisher_metadata.artist) {
+        artist = fullTrackObject.publisher_metadata.artist;
+    } 
+    // Priority 2: Parse from title "Artist - Title"
+    else if (title.includes(' - ')) {
+        const parts = title.split(' - ');
+        artist = parts.shift().trim();
+        title = parts.join(' - ').trim();
+    }
+    // Priority 3: Fallback to uploader's username
+    else if (fullTrackObject.user && fullTrackObject.user.username) {
+        artist = fullTrackObject.user.username;
+    }
+
+    // Combine artist and title for the filename
+    const finalTitle = artist ? `${artist} - ${title}` : title;
+    const sanitizedFilename = finalTitle.replace(/[/\\?%*:|"<>]/g, ''); // Remove invalid chars
+    
+    const filename = subfolder ? `${subfolder}/${sanitizedFilename}.mp3` : `${sanitizedFilename}.mp3`;
     
     console.log(`[BG] Starting download for "${fullTrackObject.title}" to "${filename}"`);
     chrome.downloads.download({
