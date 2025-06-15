@@ -1,0 +1,27 @@
+{
+  "manifest_version": 3,
+  "name": "SoundCloud Downloader",
+  "version": "1.0",
+  "description": "Скачивание музыки с SoundCloud",
+  "permissions": [
+    "downloads"
+  ],
+  "host_permissions": [
+    "https://*.soundcloud.com/*",
+    "https://api-v2.soundcloud.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "icons": {
+    "16": "icons/downloading.png",
+    "48": "icons/downloading.png",
+    "128": "icons/downloading.png"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://*.soundcloud.com/*"],
+      "js": ["content.js"]
+    }
+  ]
+} 
