@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "SoundCloud Downloader",
   "version": "1.0",
-  "description": "Скачивание музыки с SoundCloud",
+  "description": "Download tracks and playlists from SoundCloud.",
   "permissions": [
     "downloads"
   ],
