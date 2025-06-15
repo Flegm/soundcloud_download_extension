@@ -1,4 +1,6 @@
-# SoundCloud Download Extension
+# SC Audio Archiver
+
+[![Поддержать проект](https://img.shields.io/badge/Поддержать-ЮMoney-ffdd00?style=for-the-badge&logo=yoomoney&logoColor=black)](https://yoomoney.ru/to/4100119190789604)
 
 Это расширение для браузера является личным проектом, созданным в образовательных целях для изучения работы с API SoundCloud, асинхронного JavaScript и разработки расширений для Chrome.
 
