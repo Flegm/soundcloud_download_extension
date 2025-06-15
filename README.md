@@ -1,7 +1,5 @@
 # SoundCloud Download Extension
 
-[![Поддержать проект](https://img.shields.io/badge/Поддержать-ЮKassa-blue?style=for-the-badge&logo=yookassa&logoColor=white)](https://flegm.github.io/soundcloud_download_extension/)
-
 Это расширение для браузера является личным проектом, созданным в образовательных целях для изучения работы с API SoundCloud, асинхронного JavaScript и разработки расширений для Chrome.
 
 ## ⚠️ Дисклеймер
