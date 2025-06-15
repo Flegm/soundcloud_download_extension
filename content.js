@@ -67,9 +67,123 @@
     return btn;
   }
 
+  async function handleSystemPlaylist(target) {
+    console.log('[SC DL] System playlist download initiated.');
+    target.disabled = true;
+
+    try {
+        const path = window.location.pathname;
+        const clientId = await getClientId();
+        let hydrationData;
+
+        // Find and parse hydration data from page scripts
+        const scripts = Array.from(document.querySelectorAll('script'));
+        for (const script of scripts) {
+            if (script.textContent.includes('window.__sc_hydration')) {
+                const text = script.textContent;
+                const match = text.match(/window\.__sc_hydration\s*=\s*(\[.+\]);/);
+                if (match && match[1]) {
+                    try {
+                        hydrationData = JSON.parse(match[1]);
+                        break; // Found it, no need to check other scripts
+                    } catch (e) {
+                        console.warn('[SC DL] Failed to parse hydration data, continuing...', e);
+                    }
+                }
+            }
+        }
+
+        if (!hydrationData) {
+            throw new Error('Could not find or parse page hydration data.');
+        }
+
+        let tracks = [];
+        let playlistTitle = document.querySelector('.systemPlaylistDetails__title')?.textContent.trim() || 'SoundCloud Mix';
+        let playlistUser = { username: 'System' }; // Default user
+
+        console.log('[SC DL] DEBUG: Available hydration keys:', hydrationData.map(item => item.hydratable));
+        
+        // Strategy 1: Look for tracks directly in any hydration object
+        const playlistHydrationObject = hydrationData.find(item =>
+            item.data && Array.isArray(item.data.tracks) && item.data.tracks.length > 0
+        );
+
+        if (playlistHydrationObject) {
+            console.log(`[SC DL] Found tracks in hydration object: '${playlistHydrationObject.hydratable}'`);
+            tracks = playlistHydrationObject.data.tracks;
+            // Use a more specific title if available from the hydration object
+            playlistTitle = playlistHydrationObject.data.title || playlistHydrationObject.data.set_title || playlistTitle;
+            // Try to get the real user/creator of the playlist/station
+            if (playlistHydrationObject.data.user && playlistHydrationObject.data.user.username) {
+                console.log(`[SC DL] Found playlist user: ${playlistHydrationObject.data.user.username}`);
+                playlistUser = playlistHydrationObject.data.user;
+            }
+        }
+
+        // Strategy 2: If no tracks found, try API for Likes/History pages
+        if (tracks.length === 0 && (path.includes('/you/likes') || path.includes('/you/history'))) {
+            console.log('[SC DL] No tracks in hydration, trying API for Likes/History.');
+            let userId = null;
+            const userObject = hydrationData.find(item => item.hydratable === 'user' || item.hydratable === 'me');
+            if (userObject && userObject.data && userObject.data.id) {
+                userId = userObject.data.id;
+            }
+
+            if (!userId) throw new Error('Could not find User ID for Likes/History page.');
+            console.log(`[SC DL] Found User ID from page data: ${userId}`);
+
+            let apiUrl = '';
+            if (path.includes('/you/likes')) {
+                apiUrl = `https://api-v2.soundcloud.com/users/${userId}/likes?limit=400&client_id=${clientId}`;
+            } else if (path.includes('/you/history')) {
+                apiUrl = `https://api-v2.soundcloud.com/users/${userId}/history/tracks?limit=400&client_id=${clientId}`;
+            }
+
+            if (apiUrl) {
+                const response = await fetch(apiUrl);
+                if (!response.ok) throw new Error(`API request failed for ${path}: ${response.status}`);
+                const data = await response.json();
+                const apiTracks = data.collection.map(item => (item.track || item)).filter(Boolean);
+                if (apiTracks.length > 0) {
+                    tracks = apiTracks;
+                }
+            }
+        }
+
+        if (!tracks || tracks.length === 0) {
+            console.error('[SC DL] Final track search failed. For debugging, here is the full hydration data:', hydrationData);
+            throw new Error('Could not find any tracks for this system playlist.');
+        }
+
+        const playlistObject = {
+            kind: 'playlist',
+            title: playlistTitle,
+            tracks: tracks,
+            track_count: tracks.length,
+            user: playlistUser
+        };
+
+        chrome.runtime.sendMessage({
+            action: 'fetchDownloadUrl',
+            data: { trackInfo: playlistObject, clientId }
+        });
+
+    } catch (error) {
+        console.error(`[SC DL] System playlist download failed: ${error.message}`);
+    } finally {
+        setTimeout(() => { target.disabled = false; }, 1000);
+    }
+  }
+
   async function handleTrackClick(event) {
     const target = event.target.closest(`.${DOWNLOAD_BUTTON_CLASS}, .${DOWNLOAD_BUTTON_PLAYLIST_CLASS}`);
     if (!target) return;
+    
+    // --- Divert to special handler for system playlists ---
+    if (target.closest('.systemPlaylistDetails__controls')) {
+        handleSystemPlaylist(target);
+        return;
+    }
 
     event.preventDefault();
     event.stopPropagation();
@@ -162,6 +276,39 @@
             }
             group.appendChild(btn);
         }
+    });
+
+    // --- Handle System Playlist Buttons (e.g., on 'Likes' page) ---
+    const systemPlaylistControls = node.querySelectorAll('.systemPlaylistDetails__controls');
+    systemPlaylistControls.forEach(controls => {
+      if (controls.querySelector(`.${DOWNLOAD_BUTTON_PLAYLIST_CLASS}`)) return;
+
+      const btn = createDownloadButton(true); // true for playlist
+      btn.dataset.trackUrl = window.location.href; // Assign page URL for download
+
+      // Match style of other buttons
+      const existingButton = controls.querySelector('.sc-button');
+      if (existingButton) {
+        btn.classList.add('sc-button-secondary');
+        const sizeClass = Array.from(existingButton.classList).find(c => c.match(/sc-button-(small|medium|large)/));
+        if (sizeClass) {
+          btn.classList.replace('sc-button-small', sizeClass);
+        }
+      }
+      
+      // Add text label, as these buttons are not icon-only
+      const label = document.createElement('span');
+      label.className = 'sc-button-label';
+      label.textContent = 'Download';
+      btn.appendChild(label);
+
+      // Wrap button in its own div to match structure
+      const buttonWrapper = document.createElement('div');
+      buttonWrapper.className = 'systemPlaylistDetails__button';
+      buttonWrapper.appendChild(btn);
+
+      // Add to the beginning of the controls
+      controls.prepend(buttonWrapper);
     });
   }
 
