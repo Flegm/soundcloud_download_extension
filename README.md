@@ -1,4 +1,4 @@
-# SC Audio Archiver
+# SoundCloud Download Extension
 
 [![Поддержать проект](https://img.shields.io/badge/Поддержать-ЮMoney-ffdd00?style=for-the-badge&logo=yoomoney&logoColor=black)](https://yoomoney.ru/to/4100119190789604)
 
