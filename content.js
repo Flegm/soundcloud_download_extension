@@ -6,12 +6,13 @@
   // --- Configuration ---
   const ACTION_SELECTORS = [
     '.soundActions .sc-button-group',
+    '.soundActions__small .sc-button-group',
     '.soundList__item .sound__actions .sc-button-group',
     '.playableTile__actions .playableTile__actionWrapper'
   ];
   const DOWNLOAD_BUTTON_CLASS = 'sc-button-download';
   const DOWNLOAD_BUTTON_PLAYLIST_CLASS = 'sc-button-download-playlist';
-  const SVG_ICON_DOWNLOAD = `<svg width="16" height="16" viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path fill="currentColor" d="M14 12v2H2v-2H0v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2h-2zM8 0l-4 4h2.5v6H9.5V4H12L8 0z"/></svg>`;
+  const SVG_ICON_DOWNLOAD = `<svg width="16" height="16" viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M4.8 8.24l3.2 3.2 3.2-3.2-1.06-1.06-1.39 1.39V2H7.25v6.57l-1.39-1.39-1.06 1.06zM2 14h12v-2H2v2z" fill="currentColor"/></svg>`;
 
   let clientIdPromise = null;
 
@@ -117,7 +118,7 @@
             let trackUrl;
             const mainTrackContainer = group.closest('.listenEngagement__actions');
             const tileContainer = group.closest('.playableTile');
-            const soundContainer = group.closest('.sound, .soundList__item');
+            const soundContainer = group.closest('.sound, .soundList__item, .soundBadge');
 
             if (mainTrackContainer) {
                 trackUrl = window.location.href;
